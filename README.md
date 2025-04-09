@@ -10,7 +10,7 @@ Google Chat integration for Devin AI. This bot allows you to interact with Devin
 
 ## Architecture
 
-- **Backend**: FastAPI application deployed to Google Cloud Run
+- **Backend**: Go application deployed to Google Cloud Run
 - **Database**: Google Cloud Firestore for storing session mappings
 - **Secrets**: Google Cloud Secret Manager for storing API keys
 
@@ -59,9 +59,9 @@ Google Chat integration for Devin AI. This bot allows you to interact with Devin
 
 ## Local Development
 
-1. Install dependencies:
+1. Install Go dependencies:
    ```
-   pip install -r requirements.txt
+   go mod download
    ```
 
 2. Set up environment variables:
@@ -72,7 +72,7 @@ Google Chat integration for Devin AI. This bot allows you to interact with Devin
 
 3. Run the application:
    ```
-   uvicorn src.app.main:app --reload
+   go run cmd/server/main.go
    ```
 
 ## Testing
