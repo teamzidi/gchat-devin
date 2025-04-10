@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server ./cmd/server
 
-FROM alpine:latest
+FROM gcr.io/distroless/static-debian12
 
 WORKDIR /app
 
