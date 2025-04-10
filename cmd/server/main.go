@@ -12,6 +12,8 @@ import (
 	"github.com/teamzidi/gchat-devin/internal/devinapi"
 	"github.com/teamzidi/gchat-devin/internal/firestore"
 	"github.com/teamzidi/gchat-devin/internal/secretmanager"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -116,20 +118,28 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isMention := strings.Contains(messageText, "@Devin")
-
 	isCommand := strings.HasPrefix(strings.TrimSpace(messageText), "/devin")
 
-	if (isMention || isCommand) && strings.Contains(messageText, "API") && 
-	   (strings.Contains(messageText, "usage") || strings.Contains(messageText, "残り")) {
+	if shouldHandleAPIUsage(isMention, isCommand, messageText) {
 		handleAPIUsageCheck(w, r.Context(), spaceID, threadID)
 		return
 	}
 
 	if isMention || isCommand {
-		cleanMessage := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(messageText, "@Devin", ""), "/devin", ""))
+		cleanMessage := cleanUserMessage(messageText)
 
 		sessionMapping, err := firestoreClient.GetSessionByThread(r.Context(), spaceID, threadID)
-		if err == nil && sessionMapping != nil {
+		if err != nil {
+			log.Printf("Error getting session by thread: %v", err)
+			if status.Code(err) == codes.NotFound {
+				handleNewSession(w, r.Context(), cleanMessage, spaceID, threadID, userID)
+				return
+			}
+			respondWithJSON(w, ChatResponse{Text: "セッション情報の取得中にエラーが発生しました。時間を置いて再度お試しください。"})
+			return
+		}
+
+		if sessionMapping != nil {
 			handleExistingSession(w, r.Context(), sessionMapping, cleanMessage, spaceID, threadID)
 		} else {
 			handleNewSession(w, r.Context(), cleanMessage, spaceID, threadID, userID)
@@ -140,11 +150,21 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, ChatResponse{Text: ""})
 }
 
+func shouldHandleAPIUsage(isMention, isCommand bool, messageText string) bool {
+	return (isMention || isCommand) && 
+		strings.Contains(messageText, "API") && 
+		(strings.Contains(messageText, "usage") || strings.Contains(messageText, "残り"))
+}
+
+func cleanUserMessage(messageText string) string {
+	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(messageText, "@Devin", ""), "/devin", ""))
+}
+
 func handleAPIUsageCheck(w http.ResponseWriter, ctx context.Context, spaceID, threadID string) {
 	consumptionData, err := devinAPIClient.GetEnterpriseConsumption()
 	if err != nil {
 		log.Printf("Failed to get enterprise consumption data: %v", err)
-		respondWithJSON(w, ChatResponse{Text: "APIの使用状況を取得できませんでした。エラーが発生しました。"})
+		respondWithJSON(w, ChatResponse{Text: "APIの使用状況を取得できませんでした。時間を置いて再度お試しください。"})
 		return
 	}
 
@@ -169,19 +189,19 @@ func handleExistingSession(w http.ResponseWriter, ctx context.Context, sessionMa
 	_, err := devinAPIClient.SendMessage(devinSessionID, message)
 	if err != nil {
 		log.Printf("Failed to send message to Devin: %v", err)
-		respondWithJSON(w, ChatResponse{Text: "Devin にメッセージを送信できませんでした。エラーが発生しました。"})
+		respondWithJSON(w, ChatResponse{Text: "Devin にメッセージを送信できませんでした。時間を置いて再度お試しください。"})
 		return
 	}
 
-	err = firestoreClient.AddMessage(ctx, mappingID, "user", message)
+	err = addMessageWithRetry(ctx, mappingID, "user", message)
 	if err != nil {
-		log.Printf("Failed to add message to Firestore: %v", err)
+		log.Printf("Failed to add message to Firestore after retries: %v", err)
 	}
 
 	sessionDetails, err := devinAPIClient.GetSessionDetails(devinSessionID)
 	if err != nil {
 		log.Printf("Failed to get session details: %v", err)
-		respondWithJSON(w, ChatResponse{Text: "セッション詳細を取得できませんでした。エラーが発生しました。"})
+		respondWithJSON(w, ChatResponse{Text: "セッション詳細を取得できませんでした。時間を置いて再度お試しください。"})
 		return
 	}
 
@@ -194,11 +214,26 @@ func handleExistingSession(w http.ResponseWriter, ctx context.Context, sessionMa
 	respondWithJSON(w, ChatResponse{Text: responseText})
 }
 
+func addMessageWithRetry(ctx context.Context, mappingID, sender, content string) error {
+	const maxRetries = 3
+	var err error
+
+	for i := 0; i < maxRetries; i++ {
+		err = firestoreClient.AddMessage(ctx, mappingID, sender, content)
+		if err == nil {
+			return nil
+		}
+		log.Printf("Retry %d: Failed to add message to Firestore: %v", i+1, err)
+	}
+
+	return err
+}
+
 func handleNewSession(w http.ResponseWriter, ctx context.Context, prompt, spaceID, threadID, userID string) {
 	session, err := devinAPIClient.CreateSession(prompt)
 	if err != nil {
 		log.Printf("Failed to create Devin session: %v", err)
-		respondWithJSON(w, ChatResponse{Text: "Devin セッションを作成できませんでした。エラーが発生しました。"})
+		respondWithJSON(w, ChatResponse{Text: "Devin セッションを作成できませんでした。時間を置いて再度お試しください。"})
 		return
 	}
 
@@ -208,9 +243,13 @@ func handleNewSession(w http.ResponseWriter, ctx context.Context, prompt, spaceI
 		return
 	}
 
-	_, err = firestoreClient.CreateSessionMapping(ctx, spaceID, threadID, session.SessionID, userID, prompt)
+	mappingID, err := firestoreClient.CreateSessionMapping(ctx, spaceID, threadID, session.SessionID, userID, prompt)
 	if err != nil {
 		log.Printf("Failed to create session mapping in Firestore: %v", err)
+	}
+
+	if mappingID != "" {
+		log.Printf("Created session mapping with ID: %s", mappingID)
 	}
 
 	responseText := fmt.Sprintf(
