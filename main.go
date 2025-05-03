@@ -11,8 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
-	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"github.com/joeshaw/envdecode"
 	"github.com/teamzidi/gchat-devin/chat"
 	"github.com/teamzidi/gchat-devin/devin"
@@ -20,8 +18,9 @@ import (
 )
 
 var env struct {
-	Port    int    `env:"PORT,default=8080"`
-	Project string `env:"PROJECT,required"`
+	Port        int    `env:"PORT,default=8080"`
+	Project     string `env:"PROJECT,required"`
+	DevinAPIKey string `env:"DEVIN_API_KEY,required"`
 }
 
 func main() {
@@ -38,12 +37,7 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	devinAPIKey, err := getSecret(ctx, env.Project, "DEVIN_API_KEY")
-	if err != nil {
-		return fmt.Errorf("get devin api key: %w", err)
-	}
-
-	devinClient := devin.NewClient(devinAPIKey)
+	devinClient := devin.NewClient(env.DevinAPIKey)
 
 	store, err := storage.NewFirestoreStore(ctx, env.Project)
 	if err != nil {
@@ -82,27 +76,4 @@ func run() error {
 	}
 
 	return nil
-}
-
-func getSecret(ctx context.Context, project, name string) (string, error) {
-	if value := os.Getenv(name); value != "" {
-		return value, nil
-	}
-
-	client, err := secretmanager.NewClient(ctx)
-	if err != nil {
-		return "", fmt.Errorf("secret manager client: %w", err)
-	}
-	defer client.Close()
-
-	req := &secretmanagerpb.AccessSecretVersionRequest{
-		Name: fmt.Sprintf("projects/%s/secrets/%s/versions/latest", project, name),
-	}
-
-	resp, err := client.AccessSecretVersion(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("access secret version: %w", err)
-	}
-
-	return string(resp.Payload.Data), nil
 }
