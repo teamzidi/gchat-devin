@@ -267,7 +267,7 @@ func removeMention(text string, annotations []*Annotation) string {
 	
 	for _, annotation := range annotations {
 		if annotation.Type == "USER_MENTION" {
-			text = strings.Replace(text, annotation.Text, "", 1)
+			text = strings.ReplaceAll(text, annotation.Text, "")
 		}
 	}
 	
