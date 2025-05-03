@@ -212,12 +212,21 @@ func (h *Handler) handleUsageCommand(ctx context.Context, w http.ResponseWriter,
 }
 
 func (h *Handler) processDevinResponseAsync(ctx context.Context, session *storage.Session, devinSessionID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("recovered from panic in processDevinResponseAsync: %v", r)
+		}
+	}()
 	
-	time.Sleep(5 * time.Second)
+	devinResponse, err := h.devinClient.SendMessage(ctx, devinSessionID, "")
+	if err != nil {
+		log.Printf("send message to devin: %v", err)
+		return
+	}
 	
 	devinMessage := &devin.Message{
 		ID:         uuid.New().String(),
-		Content:    "これは Devin からの応答です。実際の実装では、Devin API から応答を取得します。",
+		Content:    devinResponse.Content,
 		Role:       "assistant",
 		CreateTime: time.Now(),
 	}
