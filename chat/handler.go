@@ -230,9 +230,21 @@ func (h *Handler) processDevinResponseAsync(ctx context.Context, session *storag
 		CreateTime: time.Now(),
 	}
 	
-	if err := h.store.AddMessage(ctx, assistantMessage); err != nil {
-		log.Printf("add assistant message: %v", err)
-		return
+	const maxRetries = 3
+	var attempt int
+	for attempt = 1; attempt <= maxRetries; attempt++ {
+		if err := h.store.AddMessage(ctx, assistantMessage); err != nil {
+			log.Printf("attempt %d: failed to add assistant message: %v", attempt, err)
+			if attempt < maxRetries {
+				backoff := time.Duration(attempt*attempt) * time.Second
+				log.Printf("retrying in %v...", backoff)
+				time.Sleep(backoff)
+				continue
+			}
+			log.Printf("max retries reached. giving up on adding assistant message.")
+			return
+		}
+		break
 	}
 	
 	
